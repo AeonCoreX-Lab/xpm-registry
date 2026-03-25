@@ -1,0 +1,18 @@
+{
+  "registry_version": "3.5.0",
+  "description": "Official Package Registry for X-Phage Titan",
+  "packages": {
+    "bci": {
+      "owner": "AeonCoreX-Lab",
+      "description": "Brain-Computer Interface module for OpenBCI and Neurosity Crown.",
+      "latest": "1.0.0",
+      "versions": ["1.0.0"]
+    },
+    "lsl": {
+      "owner": "AeonCoreX-Lab",
+      "description": "Lab Streaming Layer protocol for real-time bio-signal streaming.",
+      "latest": "1.0.0",
+      "versions": ["1.0.0"]
+    }
+  }
+}
