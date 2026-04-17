@@ -1,0 +1,129 @@
+name: Validate Index
+
+on:
+  pull_request:
+    paths: ['index/**']
+  push:
+    paths: ['index/**']
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-toml:
+    name: Validate TOML Index Files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tomli (for Python < 3.11)
+        run: pip install tomli 2>/dev/null || true
+
+      - name: Validate config.toml
+        run: |
+          python3 << 'EOF'
+          import sys
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          with open("index/config.toml", "rb") as f:
+              cfg = tomllib.load(f)
+
+          required = ["registry", "index_url", "download_url"]
+          errors = [f"config.toml: missing '{r}'" for r in required if r not in cfg.get("registry", cfg)]
+          if errors:
+              for e in errors: print("❌", e)
+              sys.exit(1)
+          print("✔ config.toml valid")
+          EOF
+
+      - name: Validate all package TOML files
+        run: |
+          python3 << 'EOF'
+          import sys, os, glob
+
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          files = [f for f in glob.glob("index/**/*.toml", recursive=True)
+                   if os.path.basename(f) != "config.toml"]
+
+          errors = []
+          for path in sorted(files):
+              # Check prefix directory matches package name
+              pkg_name = os.path.splitext(os.path.basename(path))[0]
+              dir_name = os.path.basename(os.path.dirname(path))
+              expected_prefix = pkg_name[:2] if len(pkg_name) >= 2 else pkg_name
+              if dir_name != expected_prefix:
+                  errors.append(f"{path}: directory '{dir_name}' != expected prefix '{expected_prefix}'")
+
+              # Parse TOML
+              with open(path, "rb") as f:
+                  try:
+                      data = tomllib.load(f)
+                  except Exception as ex:
+                      errors.append(f"{path}: TOML parse error: {ex}")
+                      continue
+
+              versions = data.get("versions", [])
+              if not versions:
+                  errors.append(f"{path}: no [[versions]] entries found")
+                  continue
+
+              required_fields = {"version", "checksum", "xh_url", "sha256_url"}
+              for i, v in enumerate(versions):
+                  for field in required_fields:
+                      if field not in v:
+                          errors.append(f"{path}[{i}]: missing required field '{field}'")
+                  ck = v.get("checksum", "")
+                  if ck and not ck.startswith("sha256:"):
+                      errors.append(f"{path}[{i}]: checksum must start with 'sha256:'")
+                  if "yanked" not in v:
+                      errors.append(f"{path}[{i}]: missing 'yanked' field")
+                  if v.get("yanked") not in (True, False):
+                      errors.append(f"{path}[{i}]: 'yanked' must be true or false")
+
+              print(f"  ✔ {path} ({len(versions)} version(s))")
+
+          if errors:
+              print(f"\n❌ {len(errors)} validation error(s):")
+              for e in errors:
+                  print(f"  {e}")
+              sys.exit(1)
+          else:
+              print(f"\n✔ {len(files)} index file(s) validated successfully.")
+          EOF
+
+      - name: Check for duplicate versions
+        run: |
+          python3 << 'EOF'
+          import sys, os, glob
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          files = [f for f in glob.glob("index/**/*.toml", recursive=True)
+                   if os.path.basename(f) != "config.toml"]
+          errors = []
+          for path in files:
+              with open(path, "rb") as f:
+                  data = tomllib.load(f)
+              versions = [v.get("version", "") for v in data.get("versions", [])]
+              seen = set()
+              for v in versions:
+                  if v in seen:
+                      errors.append(f"{path}: duplicate version '{v}'")
+                  seen.add(v)
+
+          if errors:
+              for e in errors: print("❌", e)
+              sys.exit(1)
+          print("✔ No duplicate versions found.")
+          EOF

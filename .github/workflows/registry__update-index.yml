@@ -1,0 +1,128 @@
+name: Weekly Index Health Check
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Every Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  health-check:
+    name: Index Health Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tomli
+        run: pip install tomli 2>/dev/null || true
+
+      - name: Check all release assets exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import sys, os, glob, subprocess
+
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          owner = "AeonCoreX-Lab"
+          repo  = "xpm-registry"
+          token = os.environ.get("GH_TOKEN", "")
+          headers = ["-H", f"Authorization: Bearer {token}"] if token else []
+
+          files = [f for f in glob.glob("index/**/*.toml", recursive=True)
+                   if os.path.basename(f) != "config.toml"]
+
+          warnings = []
+          checked  = 0
+
+          for path in sorted(files):
+              pkg = os.path.splitext(os.path.basename(path))[0]
+              with open(path, "rb") as f:
+                  data = tomllib.load(f)
+
+              for v in data.get("versions", []):
+                  if v.get("yanked"): continue
+                  ver = v.get("version", "")
+                  tag = f"{pkg}@{ver}"
+                  url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+
+                  r = subprocess.run(
+                      ["curl", "-sL", "-o", "/dev/null", "-w", "%{http_code}", *headers, url],
+                      capture_output=True, text=True)
+                  code = r.stdout.strip()
+
+                  if code != "200":
+                      warnings.append(f"⚠ Release missing: {tag} (HTTP {code})")
+                  else:
+                      checked += 1
+
+          print(f"✔ Checked {checked} release(s).")
+          if warnings:
+              print(f"\n{len(warnings)} warning(s):")
+              for w in warnings: print(f"  {w}")
+          else:
+              print("✔ All release assets healthy.")
+          EOF
+
+      - name: Check index TOML syntax
+        run: |
+          pip install tomli 2>/dev/null || true
+          python3 << 'EOF'
+          import sys, glob, os
+
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          files = [f for f in glob.glob("index/**/*.toml", recursive=True)]
+          errors = []
+          for path in files:
+              with open(path, "rb") as f:
+                  try:
+                      tomllib.load(f)
+                  except Exception as ex:
+                      errors.append(f"{path}: {ex}")
+
+          if errors:
+              print("❌ TOML errors:")
+              for e in errors: print(f"  {e}")
+              sys.exit(1)
+          print(f"✔ {len(files)} TOML file(s) parse successfully.")
+          EOF
+
+      - name: Report stats
+        run: |
+          python3 << 'EOF'
+          import glob, os
+
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          files = [f for f in glob.glob("index/**/*.toml", recursive=True)
+                   if os.path.basename(f) != "config.toml"]
+
+          total_versions = 0
+          yanked = 0
+
+          for path in files:
+              with open(path, "rb") as f:
+                  data = tomllib.load(f)
+              for v in data.get("versions", []):
+                  total_versions += 1
+                  if v.get("yanked"): yanked += 1
+
+          print(f"📦 Registry stats:")
+          print(f"   Packages: {len(files)}")
+          print(f"   Versions: {total_versions}")
+          print(f"   Yanked:   {yanked}")
+          EOF

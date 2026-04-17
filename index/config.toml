@@ -1,0 +1,23 @@
+# XPM Registry Configuration
+# This file is read by XPM to understand the registry layout.
+
+[registry]
+name    = "xpm-registry"
+version = "1"
+
+# Index served via raw.githubusercontent.com (CDN, no rate limits)
+# {package} = package name, {prefix} = first 2 chars of name
+index_url = "https://raw.githubusercontent.com/AeonCoreX-Lab/xpm-registry/main/index/{prefix}/{package}.toml"
+
+# Package download URL template
+# {package} = name, {version} = version, {file} = filename
+download_url = "https://github.com/AeonCoreX-Lab/xpm-registry/releases/download/{package}@{version}/{file}"
+
+# GitHub API for publishing (requires GITHUB_TOKEN)
+api_url = "https://api.github.com/repos/AeonCoreX-Lab/xpm-registry"
+
+[features]
+# Supported version constraint syntax
+semver    = true    # ^1.0, ~1.2, >=1.0.0
+yanking   = true    # publishers can yank broken versions
+checksums = "sha256"

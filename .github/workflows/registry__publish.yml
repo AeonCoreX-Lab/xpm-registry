@@ -1,0 +1,136 @@
+name: Post-Publish Check
+
+on:
+  push:
+    paths: ['index/**/*.toml']
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify-publish:
+    name: Verify New Package Publication
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need previous commit to diff
+
+      - name: Find changed index files
+        id: changed
+        run: |
+          git diff --name-only HEAD~1 HEAD -- 'index/**/*.toml' \
+            | grep -v 'config.toml' > /tmp/changed.txt || true
+          COUNT=$(wc -l < /tmp/changed.txt | tr -d ' ')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "Changed files ($COUNT):"
+          cat /tmp/changed.txt
+
+      - name: Validate changed files
+        if: steps.changed.outputs.count > 0
+        run: |
+          pip install tomli 2>/dev/null || true
+          python3 << 'EOF'
+          import sys, os
+
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          with open("/tmp/changed.txt") as f:
+              changed = [l.strip() for l in f if l.strip()]
+
+          if not changed:
+              print("No changed index files.")
+              sys.exit(0)
+
+          errors = []
+          for path in changed:
+              if not os.path.exists(path):
+                  print(f"  (deleted) {path}")
+                  continue
+
+              with open(path, "rb") as f:
+                  try:
+                      data = tomllib.load(f)
+                  except Exception as ex:
+                      errors.append(f"{path}: parse error: {ex}")
+                      continue
+
+              versions = data.get("versions", [])
+              if not versions:
+                  errors.append(f"{path}: no versions found")
+                  continue
+
+              latest = versions[-1]
+              pkg = os.path.splitext(os.path.basename(path))[0]
+              ver = latest.get("version", "")
+              ck  = latest.get("checksum", "")
+
+              print(f"  ✔ {pkg}@{ver} — {ck[:20]}...")
+
+          if errors:
+              print("\n❌ Validation errors:")
+              for e in errors: print(f"  {e}")
+              sys.exit(1)
+          print(f"\n✔ {len(changed)} file(s) validated.")
+          EOF
+
+      - name: Verify GitHub Release exists
+        if: steps.changed.outputs.count > 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 << 'EOF'
+          import sys, os, subprocess
+
+          try:
+              import tomllib
+          except ImportError:
+              import tomli as tomllib
+
+          with open("/tmp/changed.txt") as f:
+              changed = [l.strip() for l in f if l.strip()]
+
+          owner = "AeonCoreX-Lab"
+          repo  = "xpm-registry"
+          errors = []
+
+          for path in changed:
+              if not os.path.exists(path): continue
+              pkg = os.path.splitext(os.path.basename(path))[0]
+
+              with open(path, "rb") as f:
+                  data = tomllib.load(f)
+              versions = data.get("versions", [])
+              if not versions: continue
+
+              latest_ver = versions[-1].get("version", "")
+              tag = f"{pkg}@{latest_ver}"
+              url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+
+              r = subprocess.run(
+                  ["curl", "-sL", "-o", "/dev/null", "-w", "%{http_code}",
+                   "-H", f"Authorization: Bearer {os.environ.get('GH_TOKEN','')}",
+                   url],
+                  capture_output=True, text=True)
+              code = r.stdout.strip()
+
+              if code == "200":
+                  print(f"  ✔ Release exists: {tag}")
+              else:
+                  errors.append(f"Release not found: {tag} (HTTP {code})")
+
+          if errors:
+              print("\n❌ Release verification failed:")
+              for e in errors: print(f"  {e}")
+              sys.exit(1)
+          EOF
+
+      - name: Summary
+        if: steps.changed.outputs.count > 0
+        run: |
+          echo "✅ All published packages validated and verified."
+          echo "   Users can now install via: xpm install <package-name>"
